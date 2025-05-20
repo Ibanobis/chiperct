@@ -1,4 +1,4 @@
-// preguntar.js mejorado para contexto acumulado (texto libre) y búsqueda en todos los namespaces
+// preguntar.js completo con soporte para múltiples namespaces y persistencia
 import express from "express";
 import dotenv from "dotenv";
 import cors from "cors";
@@ -20,7 +20,6 @@ const pinecone = new Pinecone({ apiKey: process.env.PINECONE_API_KEY });
 const index = pinecone.index("chiperct");
 
 let ultimoMetadata = null;
-let historialMensajes = [];
 const namespaceFile = path.join("./", "namespaces.json");
 let listaNamespaces = new Set();
 
@@ -81,15 +80,87 @@ app.post("/preguntar", async (req, res) => {
   try {
     const { mensaje } = req.body;
     console.log("🗨️ Mensaje recibido:", mensaje);
-    historialMensajes.push(mensaje);
 
-    // Armar el contexto del usuario con historial completo
-    const contextoUsuario = historialMensajes.slice(-5).join("\n");
+    const consulta = mensaje.toLowerCase().trim();
+    const esSaludo = ["hola", "buenas", "hey", "holi", "saludos"].includes(consulta);
 
-    // Obtener embedding del contexto acumulado del usuario
+    if (esSaludo) {
+      return res.json({ respuesta: "¡Hola! ¿En qué puedo ayudarte hoy con herramientas Ceratizit?" });
+    }
+
+    const referenciaMatch = mensaje.match(/\b\d{8,10}\b/);
+    const pideReferencia = consulta.includes("referencia") || consulta.includes("número") || consulta.includes("numero");
+    const pideDescripcion = consulta.includes("descripción") || consulta.includes("descripcion") || consulta.includes("herramienta") || consulta.includes("hta");
+
+    let contexto = "";
+    let relevantes = [];
+    const namespace = "referencias y texto catalogo ct";
+
+    if (referenciaMatch) {
+      const ref = referenciaMatch[0];
+      const dummyVector = Array(1536).fill(0);
+      const filtroReferencia = { referencia: { $eq: Number(ref) } };
+
+      console.log("🔍 Buscando por referencia:", ref);
+      const result = await index.namespace(namespace).query({
+        vector: dummyVector,
+        topK: 1,
+        includeMetadata: true,
+        filter: filtroReferencia,
+      });
+
+      if (result.matches?.length) {
+        console.log("📦 Resultado exacto:", result.matches[0].metadata);
+        relevantes = result.matches;
+      }
+
+      const metadata = relevantes[0]?.metadata;
+      if (metadata) {
+        ultimoMetadata = metadata;
+
+        if (consulta.includes("precio")) {
+          return res.json({ respuesta: `💶 Precio unitario: ${metadata.precio_unitario} EUR` });
+        }
+        if (consulta.includes("pg") || consulta.includes("grupo")) {
+          return res.json({ respuesta: `🏷 Grupo de descuento (PG): ${metadata.pg}` });
+        }
+        if (consulta.includes("descripcion") || consulta.includes("descripción")) {
+          return res.json({ respuesta: `📄 Descripción: ${metadata.descripcion}` });
+        }
+        if (consulta.includes("referencia")) {
+          return res.json({ respuesta: `🔢 Referencia: ${metadata.referencia}` });
+        }
+        if (consulta.includes("categoria") || consulta.includes("herramienta")) {
+          return res.json({ respuesta: `🛠 Herramienta/Categoría: ${metadata.categoria}` });
+        }
+      } else {
+        return res.json({ respuesta: "🔍 Referencia no encontrada en el catálogo." });
+      }
+    }
+
+    if (!referenciaMatch && ultimoMetadata) {
+      console.log("ℹ️ Usando último metadata recordado:", ultimoMetadata);
+
+      if (consulta.includes("precio")) {
+        return res.json({ respuesta: `💶 Precio unitario: ${ultimoMetadata.precio_unitario} EUR` });
+      }
+      if (consulta.includes("pg") || consulta.includes("grupo")) {
+        return res.json({ respuesta: `🏷 Grupo de descuento (PG): ${ultimoMetadata.pg}` });
+      }
+      if (consulta.includes("descripcion") || consulta.includes("descripción")) {
+        return res.json({ respuesta: `📄 Descripción: ${ultimoMetadata.descripcion}` });
+      }
+      if (consulta.includes("referencia")) {
+        return res.json({ respuesta: `🔢 Referencia: ${ultimoMetadata.referencia}` });
+      }
+      if (consulta.includes("categoria") || consulta.includes("herramienta")) {
+        return res.json({ respuesta: `🛠 Herramienta/Categoría: ${ultimoMetadata.categoria}` });
+      }
+    }
+
     const embeddingResponse = await openai.embeddings.create({
       model: "text-embedding-3-small",
-      input: contextoUsuario,
+      input: mensaje,
     });
 
     const userEmbedding = embeddingResponse.data[0].embedding;
@@ -109,18 +180,21 @@ app.post("/preguntar", async (req, res) => {
 
     todosLosMatches.sort((a, b) => b.score - a.score);
     const scoreMinimo = 0.75;
-    const relevantes = todosLosMatches.filter((m) => m.score >= scoreMinimo);
+    relevantes = todosLosMatches.filter((m) => m.score >= scoreMinimo);
 
-    let contexto = "";
     if (relevantes.length) {
+      console.log("✅ Metadata relevante encontrada:", relevantes[0].metadata);
       ultimoMetadata = relevantes[0]?.metadata;
+
       contexto = relevantes
         .map((match) => {
           const desc = match.metadata?.descripcion || match.metadata?.texto || "";
           const ref = match.metadata?.referencia || match.id || "";
-          return `Namespace: ${match.namespace}\nReferencia: ${ref}\nDescripción: ${desc}`;
+          return pideDescripcion
+            ? `Namespace: ${match.namespace}\nReferencia: ${ref} → Descripción: ${desc}`
+            : `Namespace: ${match.namespace}\n${desc} → Referencia: ${ref}`;
         })
-        .join("\n\n");
+        .join("\n");
     }
 
     const thread = await openai.beta.threads.create();
@@ -128,7 +202,7 @@ app.post("/preguntar", async (req, res) => {
     await openai.beta.threads.messages.create(thread.id, {
       role: "user",
       content: relevantes.length > 0
-        ? `Conversación del usuario:\n${contextoUsuario}\n\nContexto obtenido:\n${contexto}\n\nResponde con precisión usando el contexto si aplica.`
+        ? `Mensaje del usuario: ${mensaje}\n\nContexto disponible:\n${contexto}\n\nResponde según el contexto. Si no es útil, responde normalmente.`
         : mensaje,
     });
 
