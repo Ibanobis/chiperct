@@ -1,8 +1,10 @@
-// preguntar.js actualizado
+// preguntar.js completo con soporte para múltiples namespaces y persistencia
 import express from "express";
 import dotenv from "dotenv";
 import cors from "cors";
 import bodyParser from "body-parser";
+import fs from "fs";
+import path from "path";
 import { OpenAI } from "openai";
 import { Pinecone } from "@pinecone-database/pinecone";
 
@@ -15,11 +17,64 @@ app.use(bodyParser.json());
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const pinecone = new Pinecone({ apiKey: process.env.PINECONE_API_KEY });
-
 const index = pinecone.index("chiperct");
-const namespace = "referencias y texto catalogo ct";
 
 let ultimoMetadata = null;
+const namespaceFile = path.join("./", "namespaces.json");
+let listaNamespaces = new Set();
+
+if (fs.existsSync(namespaceFile)) {
+  const data = fs.readFileSync(namespaceFile, "utf-8");
+  try {
+    const arr = JSON.parse(data);
+    arr.forEach((ns) => listaNamespaces.add(ns));
+  } catch (e) {
+    console.error("❌ Error al leer namespaces.json:", e.message);
+  }
+} else {
+  listaNamespaces.add("referencias y texto catalogo ct");
+  fs.writeFileSync(namespaceFile, JSON.stringify(Array.from(listaNamespaces)));
+}
+
+function guardarNamespaces() {
+  fs.writeFileSync(namespaceFile, JSON.stringify(Array.from(listaNamespaces), null, 2));
+}
+
+app.get("/namespaces", (req, res) => {
+  res.json(Array.from(listaNamespaces));
+});
+
+app.post("/subir", async (req, res) => {
+  try {
+    const { id, texto, namespace } = req.body;
+    if (!id || !texto || !namespace) {
+      return res.status(400).json({ error: "Faltan campos obligatorios" });
+    }
+
+    listaNamespaces.add(namespace);
+    guardarNamespaces();
+
+    const embeddingResponse = await openai.embeddings.create({
+      model: "text-embedding-3-small",
+      input: texto,
+    });
+
+    const embedding = embeddingResponse.data[0].embedding;
+
+    await index.namespace(namespace).upsert([
+      {
+        id,
+        values: embedding,
+        metadata: { texto },
+      },
+    ]);
+
+    res.json({ ok: true, mensaje: "Subido correctamente" });
+  } catch (error) {
+    console.error("❌ Error al subir a Pinecone:", error.message);
+    res.status(500).json({ error: "Error al subir los datos" });
+  }
+});
 
 app.post("/preguntar", async (req, res) => {
   try {
@@ -39,6 +94,7 @@ app.post("/preguntar", async (req, res) => {
 
     let contexto = "";
     let relevantes = [];
+    const namespace = "referencias y texto catalogo ct";
 
     if (referenciaMatch) {
       const ref = referenciaMatch[0];
@@ -102,7 +158,6 @@ app.post("/preguntar", async (req, res) => {
       }
     }
 
-    // Buscar por embeddings
     const embeddingResponse = await openai.embeddings.create({
       model: "text-embedding-3-small",
       input: mensaje,
@@ -129,8 +184,8 @@ app.post("/preguntar", async (req, res) => {
 
       contexto = relevantes
         .map((match) => {
-          const desc = match.metadata?.descripcion || "";
-          const ref = match.metadata?.referencia || "";
+          const desc = match.metadata?.descripcion || match.metadata?.texto || "";
+          const ref = match.metadata?.referencia || match.id || "";
           return pideDescripcion
             ? `Referencia: ${ref} → Descripción: ${desc}`
             : `${desc} → Referencia: ${ref}`;
@@ -138,7 +193,6 @@ app.post("/preguntar", async (req, res) => {
         .join("\n");
     }
 
-    // Crear hilo para el assistant
     const thread = await openai.beta.threads.create();
 
     await openai.beta.threads.messages.create(thread.id, {
