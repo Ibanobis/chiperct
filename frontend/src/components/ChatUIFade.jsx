@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { Send, Mic, Paperclip, Image, User, Bot } from 'lucide-react';
-import React from 'react';
+import ReactMarkdown from 'react-markdown';
 
 export default function ChatUIFade() {
   const [messages, setMessages] = useState([
@@ -175,7 +175,13 @@ export default function ChatUIFade() {
                         : 'bg-white text-gray-800 shadow-sm border border-gray-100'
                       : 'bg-blue-600 text-white'
                   }`}>
-                    <p>{message.isBot && !message.animationComplete ? message.displayedText : message.text}</p>
+                    {message.isBot && !message.animationComplete ? (
+                      <p>{message.displayedText}</p>
+                    ) : message.isBot ? (
+                      <ReactMarkdown>{message.text}</ReactMarkdown>
+                    ) : (
+                      <p>{message.text}</p>
+                    )}
                   </div>
                   {!message.isBot && (
                     <div className="flex-shrink-0 ml-3">
