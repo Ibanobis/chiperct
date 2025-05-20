@@ -1,3 +1,4 @@
+// preguntar.js actualizado
 import express from "express";
 import dotenv from "dotenv";
 import cors from "cors";
@@ -18,7 +19,7 @@ const pinecone = new Pinecone({ apiKey: process.env.PINECONE_API_KEY });
 const index = pinecone.index("chiperct");
 const namespace = "referencias y texto catalogo ct";
 
-let ultimoMetadata = null; 
+let ultimoMetadata = null;
 
 app.post("/preguntar", async (req, res) => {
   try {
@@ -38,7 +39,6 @@ app.post("/preguntar", async (req, res) => {
 
     let contexto = "";
     let relevantes = [];
-    let desdeFiltro = false;
 
     if (referenciaMatch) {
       const ref = referenciaMatch[0];
@@ -46,38 +46,35 @@ app.post("/preguntar", async (req, res) => {
       const filtroReferencia = { referencia: { $eq: Number(ref) } };
 
       console.log("🔍 Buscando por referencia:", ref);
-      console.log("📤 Filtro aplicado:", filtroReferencia);
-
       const result = await index.namespace(namespace).query({
         vector: dummyVector,
         topK: 1,
         includeMetadata: true,
-        filter: filtroReferencia
+        filter: filtroReferencia,
       });
 
       if (result.matches?.length) {
         console.log("📦 Resultado exacto:", result.matches[0].metadata);
         relevantes = result.matches;
-        desdeFiltro = true;
       }
 
       const metadata = relevantes[0]?.metadata;
       if (metadata) {
         ultimoMetadata = metadata;
 
-        if (consulta.includes('precio')) {
+        if (consulta.includes("precio")) {
           return res.json({ respuesta: `💶 Precio unitario: ${metadata.precio_unitario} EUR` });
         }
-        if (consulta.includes('pg') || consulta.includes('grupo')) {
+        if (consulta.includes("pg") || consulta.includes("grupo")) {
           return res.json({ respuesta: `🏷 Grupo de descuento (PG): ${metadata.pg}` });
         }
-        if (consulta.includes('descripcion') || consulta.includes('descripción')) {
+        if (consulta.includes("descripcion") || consulta.includes("descripción")) {
           return res.json({ respuesta: `📄 Descripción: ${metadata.descripcion}` });
         }
-        if (consulta.includes('referencia')) {
+        if (consulta.includes("referencia")) {
           return res.json({ respuesta: `🔢 Referencia: ${metadata.referencia}` });
         }
-        if (consulta.includes('categoria') || consulta.includes('herramienta')) {
+        if (consulta.includes("categoria") || consulta.includes("herramienta")) {
           return res.json({ respuesta: `🛠 Herramienta/Categoría: ${metadata.categoria}` });
         }
       } else {
@@ -88,19 +85,19 @@ app.post("/preguntar", async (req, res) => {
     if (!referenciaMatch && ultimoMetadata) {
       console.log("ℹ️ Usando último metadata recordado:", ultimoMetadata);
 
-      if (consulta.includes('precio')) {
+      if (consulta.includes("precio")) {
         return res.json({ respuesta: `💶 Precio unitario: ${ultimoMetadata.precio_unitario} EUR` });
       }
-      if (consulta.includes('pg') || consulta.includes('grupo')) {
+      if (consulta.includes("pg") || consulta.includes("grupo")) {
         return res.json({ respuesta: `🏷 Grupo de descuento (PG): ${ultimoMetadata.pg}` });
       }
-      if (consulta.includes('descripcion') || consulta.includes('descripción')) {
+      if (consulta.includes("descripcion") || consulta.includes("descripción")) {
         return res.json({ respuesta: `📄 Descripción: ${ultimoMetadata.descripcion}` });
       }
-      if (consulta.includes('referencia')) {
+      if (consulta.includes("referencia")) {
         return res.json({ respuesta: `🔢 Referencia: ${ultimoMetadata.referencia}` });
       }
-      if (consulta.includes('categoria') || consulta.includes('herramienta')) {
+      if (consulta.includes("categoria") || consulta.includes("herramienta")) {
         return res.json({ respuesta: `🛠 Herramienta/Categoría: ${ultimoMetadata.categoria}` });
       }
     }
@@ -124,58 +121,31 @@ app.post("/preguntar", async (req, res) => {
     const scoreMasAlto = matches.length ? matches[0].score.toFixed(3) : "N/A";
     console.log(`🔎 Pinecone devolvió ${matches.length} coincidencias, score más alto: ${scoreMasAlto}`);
 
-    relevantes = matches.filter((m) => m.score > scoreMinimo);
+    relevantes = matches.filter((m) => m.score >= scoreMinimo);
 
-    if (relevantes.length === 0) {
-      console.log("🚫 Pinecone no devolvió nada relevante.");
+    if (relevantes.length) {
+      console.log("✅ Metadata relevante encontrada:", relevantes[0].metadata);
+      ultimoMetadata = relevantes[0]?.metadata;
 
-      if (!referenciaMatch && !ultimoMetadata) {
-        console.log("🤖 Enviando pregunta directamente a OpenAI sin contexto.");
-
-        const thread = await openai.beta.threads.create();
-        await openai.beta.threads.messages.create(thread.id, {
-          role: "user",
-          content: mensaje,
-        });
-
-        const run = await openai.beta.threads.runs.create(thread.id, {
-          assistant_id: process.env.ASSISTANT_ID,
-        });
-
-        let status = "queued";
-        while (status === "queued" || status === "in_progress") {
-          await new Promise((resolve) => setTimeout(resolve, 1000));
-          const updatedRun = await openai.beta.threads.runs.retrieve(thread.id, run.id);
-          status = updatedRun.status;
-        }
-
-        const messages = await openai.beta.threads.messages.list(thread.id);
-        const respuesta = messages.data[0].content[0].text.value;
-
-        return res.json({ respuesta });
-      }
-
-      return res.json({ respuesta: "No se ha encontrado ninguna información relevante sobre tu mensaje." });
+      contexto = relevantes
+        .map((match) => {
+          const desc = match.metadata?.descripcion || "";
+          const ref = match.metadata?.referencia || "";
+          return pideDescripcion
+            ? `Referencia: ${ref} → Descripción: ${desc}`
+            : `${desc} → Referencia: ${ref}`;
+        })
+        .join("\n");
     }
 
-    console.log("✅ Metadata relevante encontrada:", relevantes[0].metadata);
-
-    contexto = relevantes
-      .map((match) => {
-        const desc = match.metadata?.descripcion || "";
-        const ref = match.metadata?.referencia || "";
-        return pideDescripcion
-          ? `Referencia: ${ref} → Descripción: ${desc}`
-          : `${desc} → Referencia: ${ref}`;
-      })
-      .join("\n");
-
-    ultimoMetadata = relevantes[0]?.metadata;
-
+    // Crear hilo para el assistant
     const thread = await openai.beta.threads.create();
+
     await openai.beta.threads.messages.create(thread.id, {
       role: "user",
-      content: `Mensaje del usuario: ${mensaje}\n\nContexto disponible:\n${contexto}\n\nTu tarea es interpretar su intención y responder correctamente según el contexto. Si no hay coincidencia clara, responde con: "No encontrada".`,
+      content: relevantes.length > 0
+        ? `Mensaje del usuario: ${mensaje}\n\nContexto disponible:\n${contexto}\n\nResponde según el contexto. Si no es útil, responde normalmente.`
+        : mensaje,
     });
 
     const run = await openai.beta.threads.runs.create(thread.id, {
