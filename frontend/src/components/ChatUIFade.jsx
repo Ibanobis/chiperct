@@ -8,6 +8,7 @@ export default function ChatUIFade() {
   const [namespaces, setNamespaces] = useState([]);
   const [namespace, setNamespace] = useState("");
   const [nuevoNamespace, setNuevoNamespace] = useState("");
+  const [cargando, setCargando] = useState(false);
   const endRef = useRef(null);
 
   useEffect(() => {
@@ -23,7 +24,7 @@ export default function ChatUIFade() {
     if (endRef.current) endRef.current.scrollIntoView({ behavior: "smooth" });
   };
 
-  useEffect(scrollToEnd, [mensajes]);
+  useEffect(scrollToEnd, [mensajes, cargando]);
 
   const handleSendMessage = async () => {
     if (!input.trim()) return;
@@ -31,6 +32,7 @@ export default function ChatUIFade() {
     const nuevoMensaje = { tipo: "usuario", texto: input };
     setMensajes((prev) => [...prev, nuevoMensaje]);
     setInput("");
+    setCargando(true);
 
     try {
       const res = await fetch(`${import.meta.env.VITE_API_URL}/preguntar`, {
@@ -43,7 +45,9 @@ export default function ChatUIFade() {
       setMensajes((prev) => [...prev, { tipo: "asistente", texto: data.respuesta }]);
     } catch (error) {
       console.error("Error al obtener la respuesta:", error);
-      setMensajes((prev) => [...prev, { tipo: "error", texto: "Error al conectar con el servidor" }]);
+      setMensajes((prev) => [...prev, { tipo: "error", texto: "❌ Error al conectar con el servidor." }]);
+    } finally {
+      setCargando(false);
     }
   };
 
@@ -59,8 +63,8 @@ export default function ChatUIFade() {
       });
 
       const data = await res.json();
-      if (data.ok) alert("Texto subido correctamente");
-      else alert("Error al subir");
+      if (data.ok) alert("✅ Texto subido correctamente");
+      else alert("⚠️ Error al subir el texto");
     } catch (error) {
       console.error("Error al subir texto:", error);
     }
@@ -76,14 +80,21 @@ export default function ChatUIFade() {
                 msg.tipo === "usuario"
                   ? "bg-blue-500 text-white"
                   : msg.tipo === "asistente"
-                  ? "bg-gray-300 dark:bg-gray-700 dark:text-white"
-                  : "bg-red-400 text-white"
+                  ? "bg-white dark:bg-gray-700 text-black dark:text-white"
+                  : "bg-red-500 text-white"
               }`}
             >
               {msg.texto}
             </span>
           </div>
         ))}
+        {cargando && (
+          <div className="text-left">
+            <span className="inline-block px-3 py-2 rounded-lg bg-gray-300 dark:bg-gray-600 animate-pulse">
+              ... pensando
+            </span>
+          </div>
+        )}
         <div ref={endRef} />
       </div>
 
