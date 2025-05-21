@@ -1,4 +1,4 @@
-// preguntar.js con logs de debugging para búsqueda por embeddings
+// preguntar.js con limpieza de respuesta y logs extendidos
 import express from "express";
 import dotenv from "dotenv";
 import cors from "cors";
@@ -176,18 +176,18 @@ app.post("/preguntar", async (req, res) => {
       });
       console.log(`📂 Namespace ${ns} → ${result.matches?.length || 0} matches`);
       (result.matches || []).forEach((match) => {
-        console.log(`🔸 Score ${match.score.toFixed(3)}: ${match.id}`);
+        console.log(`🔸 [${ns}] Score ${match.score.toFixed(3)} ID: ${match.id}`);
         match.namespace = ns;
         todosLosMatches.push(match);
       });
     }
 
     todosLosMatches.sort((a, b) => b.score - a.score);
-    const scoreMinimo = 0.6; // reducido temporalmente para debug
+    const scoreMinimo = 0.6;
     relevantes = todosLosMatches.filter((m) => m.score >= scoreMinimo);
 
     if (relevantes.length) {
-      console.log("✅ Metadata relevante encontrada:", relevantes[0].metadata);
+      console.log("✅ Metadata relevante encontrada en:", relevantes[0].namespace);
       ultimoMetadata = relevantes[0]?.metadata;
 
       contexto = relevantes
@@ -224,7 +224,8 @@ app.post("/preguntar", async (req, res) => {
     }
 
     const messages = await openai.beta.threads.messages.list(thread.id);
-    const respuesta = messages.data[0].content[0].text.value;
+    const ultimaRespuesta = messages.data.find(m => m.role === "assistant");
+    const respuesta = ultimaRespuesta?.content[0].text.value || "No se obtuvo respuesta del modelo.";
 
     res.json({ respuesta });
   } catch (error) {
