@@ -1,4 +1,4 @@
-// preguntar.js completo con soporte para múltiples namespaces y persistencia
+// preguntar.js completo con soporte para múltiples namespaces y detección inteligente de intención
 import express from "express";
 import dotenv from "dotenv";
 import cors from "cors";
@@ -91,12 +91,14 @@ app.post("/preguntar", async (req, res) => {
     const referenciaMatch = mensaje.match(/\b\d{8,10}\b/);
     const pideReferencia = consulta.includes("referencia") || consulta.includes("número") || consulta.includes("numero");
     const pideDescripcion = consulta.includes("descripción") || consulta.includes("descripcion") || consulta.includes("herramienta") || consulta.includes("hta");
+    const pideCondiciones = consulta.includes("condiciones") || consulta.includes("corte") || consulta.includes("velocidad") || consulta.includes("avance");
 
     let contexto = "";
     let relevantes = [];
     const namespace = "referencias y texto catalogo ct";
 
-    if (referenciaMatch) {
+    // Buscar por referencia solo si no está pidiendo condiciones técnicas
+    if (referenciaMatch && !pideCondiciones) {
       const ref = referenciaMatch[0];
       const dummyVector = Array(1536).fill(0);
       const filtroReferencia = { referencia: { $eq: Number(ref) } };
