@@ -1,4 +1,4 @@
-// preguntar.js completo con soporte para múltiples namespaces y detección inteligente de intención
+// preguntar.js con logs de debugging para búsqueda por embeddings
 import express from "express";
 import dotenv from "dotenv";
 import cors from "cors";
@@ -97,7 +97,6 @@ app.post("/preguntar", async (req, res) => {
     let relevantes = [];
     const namespace = "referencias y texto catalogo ct";
 
-    // Buscar por referencia solo si no está pidiendo condiciones técnicas
     if (referenciaMatch && !pideCondiciones) {
       const ref = referenciaMatch[0];
       const dummyVector = Array(1536).fill(0);
@@ -160,6 +159,7 @@ app.post("/preguntar", async (req, res) => {
       }
     }
 
+    console.log("➡️ Ejecutando búsqueda contextual por embeddings...");
     const embeddingResponse = await openai.embeddings.create({
       model: "text-embedding-3-small",
       input: mensaje,
@@ -174,14 +174,16 @@ app.post("/preguntar", async (req, res) => {
         topK: 5,
         includeMetadata: true,
       });
+      console.log(`📂 Namespace ${ns} → ${result.matches?.length || 0} matches`);
       (result.matches || []).forEach((match) => {
+        console.log(`🔸 Score ${match.score.toFixed(3)}: ${match.id}`);
         match.namespace = ns;
         todosLosMatches.push(match);
       });
     }
 
     todosLosMatches.sort((a, b) => b.score - a.score);
-    const scoreMinimo = 0.75;
+    const scoreMinimo = 0.6; // reducido temporalmente para debug
     relevantes = todosLosMatches.filter((m) => m.score >= scoreMinimo);
 
     if (relevantes.length) {
@@ -197,6 +199,8 @@ app.post("/preguntar", async (req, res) => {
             : `Namespace: ${match.namespace}\n${desc} → Referencia: ${ref}`;
         })
         .join("\n");
+    } else {
+      console.log("⚠️ No se encontró metadata relevante con score >=", scoreMinimo);
     }
 
     const thread = await openai.beta.threads.create();
